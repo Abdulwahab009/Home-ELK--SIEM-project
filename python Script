@@ -1,1 +1,113 @@
+#This python script is optional too you can make youre too this script is use to take logs from your system and forward it to logstash, u can definetly develop ur own script too totally depends on you,
+
+import socket
+import json
+import psutil
+import win32evtlog 
+import time
+
+# Logstash configuration
+logstash_host = 'localhost'
+logstash_port = 5000
+
+# Create a TCP/IP socket
+sock = None
+
+try:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.connect((logstash_host, logstash_port))
+except Exception as e:
+    print(f"Error connecting to Logstash: {e}")
+    exit(1)
+
+# Initialize variables for log tracking
+last_record_number = {
+    'System': 0,
+    'Application': 0,
+    'Security': 0
+}
+
+def get_system_logs():
+    """Collect system logs like CPU, memory, and disk usage."""
+    try:
+        logs = {
+            'cpu_percent': psutil.cpu_percent(interval=1),
+            'memory_percent': psutil.virtual_memory().percent,
+            'disk_usage': psutil.disk_usage('/').percent,
+            'network_info': psutil.net_io_counters()._asdict(),
+            'timestamp': time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+        }
+        return logs
+    except Exception as e:
+        print(f"Error gathering system logs: {e}")
+        return None
+
+def get_event_logs(logtype='System', num_logs=10):
+    """Collect Windows Event Logs from System, Security, or Application."""
+    logs = []
+    try:
+        server = 'localhost'  # Local machine
+        hand = win32evtlog.OpenEventLog(server, logtype)
+
+        flags = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
+        total = win32evtlog.GetNumberOfEventLogRecords(hand)
+
+        # Read new logs incrementally
+        if last_record_number[logtype] >= total:
+            win32evtlog.CloseEventLog(hand)
+            return logs
+
+        records_to_read = min(total - last_record_number[logtype], num_logs)
+
+        # Read the event logs
+        events = win32evtlog.ReadEventLog(hand, flags, last_record_number[logtype])
+
+        for event in events[:records_to_read]:
+            event_data = {
+                'EventCategory': event.EventCategory,
+                'TimeGenerated': event.TimeGenerated.Format(),
+                'SourceName': event.SourceName,
+                'EventID': event.EventID,
+                'EventType': event.EventType,
+                'EventData': event.StringInserts if event.StringInserts else [],
+                'log_type': logtype,
+                'timestamp': time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+            }
+            logs.append(event_data)
+
+        last_record_number[logtype] = total  # Update to the latest record number
+        win32evtlog.CloseEventLog(hand)
+    except Exception as e:
+        print(f"Error accessing {logtype} event logs: {e}")
+
+    return logs
+
+def send_logs_to_logstash(logs):
+    """Send logs to Logstash via TCP."""
+    try:
+        if logs:
+            message = json.dumps(logs)  # Convert logs to JSON
+            sock.sendall(message.encode('utf-8'))
+    except Exception as e:
+        print(f"Error sending logs to Logstash: {e}")
+
+if __name__ == "__main__":
+    try:
+        while True:
+            # Collect system logs
+            system_logs = get_system_logs()
+            if system_logs:
+                send_logs_to_logstash(system_logs)
+
+            # Collect Windows Event Logs for System, Application, and Security
+            for log_type in ['System', 'Application', 'Security']:
+                event_logs = get_event_logs(logtype=log_type, num_logs=10)  # Adjust the number of logs
+                send_logs_to_logstash(event_logs)
+
+            time.sleep(10)  # Adjust the sleep time as needed
+    except KeyboardInterrupt:
+        print("Stopped logging.")
+    finally:
+        if sock:
+            sock.close()
 
