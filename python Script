@@ -1,4 +1,5 @@
-#This python script is optional too you can make youre too this script is use to take logs from your system and forward it to logstash, u can definetly develop ur own script too totally depends on you,
+# This python script is optional too you can make your's too this script is use to take logs from your system and forward it to logstash, u can definetly develop/write ur own script too totally depends on you i write
+# mine for practise and i will recommend it,if u have any intrest for scripting.
 
 import socket
 import json
